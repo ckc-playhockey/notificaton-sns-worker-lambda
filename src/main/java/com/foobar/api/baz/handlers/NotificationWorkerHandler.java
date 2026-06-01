@@ -61,7 +61,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
     private void processBatch(WorkerPayload payload, LambdaLogger logger) {
 
         logger.log("Is silent notification : " + payload.isSilentPush());
-        if(!payload.isSilentPush()) {
+        if (!payload.isSilentPush()) {
 
             Map<String, List<UserDevice>> userDevicesMap =
                     fetchDevicesBulk(payload.getUserIds(), logger);
@@ -72,6 +72,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             for (String userId : payload.getUserIds()) {
                 executor.submit(() -> {
                     try {
+                        int badgeCount = getUnreadNotificationCount(userId, logger);
                         List<UserDevice> devices = userDevicesMap.getOrDefault(userId, Collections.emptyList());
 
                         if (devices.isEmpty()) {
@@ -87,7 +88,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
                             }
 
                             logger.log(GSON.toJson(device));
-                            String message = buildPlatformMessage(device.getPlatform(), device.getEnvironment() ,payload, logger);
+                            String message = buildPlatformMessage(device.getPlatform(), device.getEnvironment(), badgeCount, payload, logger);
                             logger.log(message);
                             sendNotification(endpointArn, message, logger);
 
@@ -102,9 +103,54 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             shutdownExecutor(executor, logger);
 
+        } else {
+            // Handle silent push notifications
+            Map<String, List<UserDevice>> userDevicesMap =
+                    fetchDevicesBulk(payload.getUserIds(), logger);
+
+            ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+            Set<String> processedEndpoints = ConcurrentHashMap.newKeySet();
+
+            for (String userId : payload.getUserIds()) {
+                executor.submit(() -> {
+                    try {
+                        int badgeCount = getUnreadNotificationCount(userId, logger);
+                        logger.log("Badge count for user " + userId + ": " + badgeCount);
+
+                        List<UserDevice> devices = userDevicesMap.getOrDefault(userId, Collections.emptyList());
+
+                        if (devices.isEmpty()) {
+                            logger.log("No devices for user: " + userId);
+                            return;
+                        }
+
+                        for (UserDevice device : devices) {
+                            String endpointArn = device.getEndpointArn();
+                            if (endpointArn == null || !processedEndpoints.add(endpointArn)) {
+                                logger.log("Skipping null or duplicate endpoint: " + endpointArn);
+                                continue;
+                            }
+
+                            logger.log(GSON.toJson(device));
+                            String message = buildSilentPlatformMessage(device.getPlatform(), device.getEnvironment(), badgeCount, logger);
+                            logger.log(message);
+                            sendNotification(endpointArn, message, logger);
+
+                            Thread.sleep(5);
+                        }
+
+                    } catch (Exception e) {
+                        logger.log("ERROR processing silent notification for user " + userId + ": " + e.getMessage());
+                    }
+                });
+            }
+
+            shutdownExecutor(executor, logger);
         }
 
-        saveNotificationStatus(payload, logger);
+        if (payload.getNotificationTopic() != null && !payload.getNotificationTopic().equals("Read Notification"))
+            saveNotificationStatus(payload, logger);
+
     }
 
     private void shutdownExecutor(ExecutorService executor, LambdaLogger logger) {
@@ -169,7 +215,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             PublishResponse response = SNS.publish(request);
             logger.log("SNS Message sent to " + endpointArn + ". MessageId: " + response.messageId());
 
-            } catch (EndpointDisabledException | InvalidParameterException | NotFoundException e) {
+        } catch (EndpointDisabledException | InvalidParameterException | NotFoundException e) {
             logger.log("Endpoint invalid or disabled. Deactivating ARN: " + endpointArn + " Reason: " + e.getMessage());
             deactivateEndpoint(endpointArn, logger);
         } catch (Exception e) {
@@ -193,7 +239,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
         }
     }
 
-    private String buildPlatformMessage(String platform,String environment, WorkerPayload payload, LambdaLogger logger) {
+    private String buildPlatformMessage(String platform, String environment, int badgeCount, WorkerPayload payload, LambdaLogger logger) {
 
         Map<String, Object> message = new HashMap<>();
 
@@ -208,16 +254,17 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> data = new HashMap<>();
             data.put("title", payload.getTitle());
             data.put("body", payload.getBody());
+            data.put("badge_count", badgeCount);
 
             Map<String, Object> jsonBody = new HashMap<>();
 
-            if(payload.getNotificationId() != null) {
+            if (payload.getNotificationId() != null) {
                 jsonBody.put("notification_id", payload.getNotificationId());
             }
             if (payload.getUrl() != null && !payload.getUrl().isEmpty()) {
                 jsonBody.put("external_link", payload.getUrl());
             }
-            if(payload.getVideoId() != null && payload.getVideoId() != 0) {
+            if (payload.getVideoId() != null && payload.getVideoId() != 0) {
                 jsonBody.put("video_id", payload.getVideoId());
             }
 
@@ -228,8 +275,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             message.put("GCM", GSON.toJson(gcm));
 
-        }
-        else if ("IOS".equalsIgnoreCase(platform)) {
+        } else if ("IOS".equalsIgnoreCase(platform)) {
 
             Map<String, Object> alert = new HashMap<>();
             alert.put("title", payload.getTitle());
@@ -238,12 +284,13 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> aps = new HashMap<>();
             aps.put("alert", alert);
             aps.put("sound", "default");
+            aps.put("badge", badgeCount);
 
             Map<String, Object> jsonBody = new HashMap<>();
             if (payload.getUrl() != null && !payload.getUrl().isEmpty()) {
                 jsonBody.put("external_link", payload.getUrl());
             }
-            if(payload.getVideoId() != null && payload.getVideoId() != 0) {
+            if (payload.getVideoId() != null && payload.getVideoId() != 0) {
                 jsonBody.put("video_id", payload.getVideoId());
             }
             jsonBody.put("notification_id", payload.getNotificationId() != null ? payload.getNotificationId() : "");
@@ -254,10 +301,10 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             String apnsPayload = GSON.toJson(apns);
 
-            if(environment.equalsIgnoreCase("PROD"))
+            if (environment.equalsIgnoreCase("PROD"))
                 message.put("APNS", apnsPayload);
 
-            else if(environment.equalsIgnoreCase("SANDBOX"))
+            else if (environment.equalsIgnoreCase("SANDBOX"))
                 message.put("APNS_SANDBOX", apnsPayload);
 
             logger.log(GSON.toJson(message));
@@ -269,7 +316,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
     private void saveNotificationStatus(WorkerPayload payload, LambdaLogger logger) {
 
         try (Connection conn = DatabaseService.getConnection();
-                PreparedStatement mappingSt = conn.prepareStatement(USER_MAPPING_QUERY)) {
+             PreparedStatement mappingSt = conn.prepareStatement(USER_MAPPING_QUERY)) {
 
             for (String userId : payload.getUserIds()) {
                 try {
@@ -293,5 +340,64 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             logger.log("DATABASE ERROR: " + e.getMessage());
             throw new RuntimeException("Failed to update notification status", e);
         }
+    }
+
+    private int getUnreadNotificationCount(String userId, LambdaLogger logger) {
+        String query = "SELECT COUNT(*) FROM public.user_notification_status WHERE user_id = ? AND read = false";
+
+        try (Connection conn = DatabaseService.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setObject(1, UUID.fromString(userId));
+            ResultSet rs = stmt.executeQuery();
+
+            if (rs.next()) {
+                int count = rs.getInt(1);
+                logger.log("Unread notification count for user " + userId + ": " + count);
+                return count;
+            }
+
+        } catch (Exception e) {
+            logger.log("ERROR fetching unread notification count for user " + userId + ": " + e.getMessage());
+            throw new RuntimeException("Failed to fetch unread notification count", e);
+        }
+
+        return 0;
+    }
+
+    private String buildSilentPlatformMessage(String platform, String environment, int badgeCount, LambdaLogger logger) {
+
+        Map<String, Object> message = new HashMap<>();
+        message.put("default", "");
+
+        if ("ANDROID".equalsIgnoreCase(platform)) {
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("badge_count", badgeCount);
+
+            Map<String, Object> gcm = new HashMap<>();
+            gcm.put("data", data);
+
+            message.put("GCM", GSON.toJson(gcm));
+
+        } else if ("IOS".equalsIgnoreCase(platform)) {
+
+            Map<String, Object> aps = new HashMap<>();
+            aps.put("badge", badgeCount);
+            aps.put("content-available", 1);
+
+            Map<String, Object> apns = new HashMap<>();
+            apns.put("aps", aps);
+
+            String apnsPayload = GSON.toJson(apns);
+
+            if (environment.equalsIgnoreCase("PROD"))
+                message.put("APNS", apnsPayload);
+
+            else if (environment.equalsIgnoreCase("SANDBOX"))
+                message.put("APNS_SANDBOX", apnsPayload);
+        }
+
+        return GSON.toJson(message);
     }
 }
