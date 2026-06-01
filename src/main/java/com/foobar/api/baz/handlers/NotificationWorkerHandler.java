@@ -392,8 +392,6 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> apns = new HashMap<>();
             apns.put("aps", aps);
             apns.put("notification_ids", payload.getReadNotificationIds());
-            apns.put("apns-priority", 5);
-            apns.put("apns-push-type", "background");
 
             String apnsPayload = GSON.toJson(apns);
 
