@@ -45,6 +45,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
         for (SQSEvent.SQSMessage record : event.getRecords()) {
             try {
                 WorkerPayload payload = GSON.fromJson(record.getBody(), WorkerPayload.class);
+                logger.log("The payload is : " +  GSON.toJson(payload));
                 logger.log("Processing batch for " + payload.getUserIds().size() + " users");
 
                 processBatch(payload, logger);
@@ -132,7 +133,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
                             }
 
                             logger.log(GSON.toJson(device));
-                            String message = buildSilentPlatformMessage(device.getPlatform(), device.getEnvironment(), badgeCount, logger);
+                            String message = buildSilentPlatformMessage(device.getPlatform(), device.getEnvironment(), badgeCount, payload, logger);
                             logger.log(message);
                             sendNotification(endpointArn, message, logger);
 
@@ -254,7 +255,8 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> data = new HashMap<>();
             data.put("title", payload.getTitle());
             data.put("body", payload.getBody());
-            data.put("badge_count", badgeCount);
+            data.put("badge_count", badgeCount + 1);
+            data.put("notification_id", payload.getNotificationId());
 
             Map<String, Object> jsonBody = new HashMap<>();
 
@@ -284,7 +286,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> aps = new HashMap<>();
             aps.put("alert", alert);
             aps.put("sound", "default");
-            aps.put("badge", badgeCount);
+            aps.put("badge", badgeCount + 1);
 
             Map<String, Object> jsonBody = new HashMap<>();
             if (payload.getUrl() != null && !payload.getUrl().isEmpty()) {
@@ -297,6 +299,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             Map<String, Object> apns = new HashMap<>();
             apns.put("aps", aps);
+            apns.put("notification_id", payload.getNotificationId());
             apns.put("jsonBody", jsonBody);
 
             String apnsPayload = GSON.toJson(apns);
@@ -365,7 +368,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
         return 0;
     }
 
-    private String buildSilentPlatformMessage(String platform, String environment, int badgeCount, LambdaLogger logger) {
+    private String buildSilentPlatformMessage(String platform, String environment, int badgeCount, WorkerPayload payload, LambdaLogger logger) {
 
         Map<String, Object> message = new HashMap<>();
         message.put("default", "");
@@ -374,7 +377,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             Map<String, Object> data = new HashMap<>();
             data.put("badge_count", badgeCount);
-
+            data.put("notification_id", payload.getNotificationId());
             Map<String, Object> gcm = new HashMap<>();
             gcm.put("data", data);
 
@@ -388,6 +391,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             Map<String, Object> apns = new HashMap<>();
             apns.put("aps", aps);
+            apns.put("notification_id", payload.getNotificationId());
 
             String apnsPayload = GSON.toJson(apns);
 
