@@ -149,7 +149,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             shutdownExecutor(executor, logger);
         }
 
-        if (payload.getNotificationTopic() != null && !payload.getNotificationTopic().equals("Read Notification"))
+        if (payload.getNotificationTopic() != null && !payload.getNotificationTopic().equals("NOTIFICATION_READ"))
             saveNotificationStatus(payload, logger);
 
     }
@@ -377,7 +377,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             Map<String, Object> data = new HashMap<>();
             data.put("badge_count", badgeCount);
-            data.put("notification_id", payload.getNotificationId());
+            data.put("notification_ids", payload.getReadNotificationIds());
             Map<String, Object> gcm = new HashMap<>();
             gcm.put("data", data);
 
@@ -391,7 +391,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             Map<String, Object> apns = new HashMap<>();
             apns.put("aps", aps);
-            apns.put("notification_id", payload.getNotificationId());
+            apns.put("notification_ids", payload.getReadNotificationIds());
 
             String apnsPayload = GSON.toJson(apns);
 

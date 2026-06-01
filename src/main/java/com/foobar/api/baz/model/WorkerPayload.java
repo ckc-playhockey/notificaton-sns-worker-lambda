@@ -18,4 +18,5 @@ public class WorkerPayload {
         String title;
         String body;
         Integer videoId;
+        List<String> readNotificationIds;
 }
