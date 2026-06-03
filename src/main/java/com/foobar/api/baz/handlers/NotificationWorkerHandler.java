@@ -378,6 +378,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> data = new HashMap<>();
             data.put("badge_count", badgeCount);
             data.put("notification_ids", payload.getReadNotificationIds());
+            data.put("type", payload.getNotificationTopic());
             Map<String, Object> gcm = new HashMap<>();
             gcm.put("data", data);
 
