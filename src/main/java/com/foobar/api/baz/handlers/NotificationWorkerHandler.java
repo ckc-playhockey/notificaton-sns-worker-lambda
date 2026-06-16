@@ -104,7 +104,8 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             shutdownExecutor(executor, logger);
 
-        } else {
+        }
+        else {
             // Handle silent push notifications
             Map<String, List<UserDevice>> userDevicesMap =
                     fetchDevicesBulk(payload.getUserIds(), logger);
@@ -116,6 +117,9 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
                 executor.submit(() -> {
                     try {
                         int badgeCount = getUnreadNotificationCount(userId, logger);
+                        if(!payload.getNotificationTopic().equals("NOTIFICATION_READ")){
+                            badgeCount++;
+                        }
                         logger.log("Badge count for user " + userId + ": " + badgeCount);
 
                         List<UserDevice> devices = userDevicesMap.getOrDefault(userId, Collections.emptyList());
