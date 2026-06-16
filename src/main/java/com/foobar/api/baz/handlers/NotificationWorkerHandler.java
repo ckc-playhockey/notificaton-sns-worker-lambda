@@ -208,6 +208,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             Map<String, Object> data = new HashMap<>();
             data.put("title", payload.getTitle());
             data.put("body", payload.getBody());
+            data.put("notification_id", payload.getNotificationId());
 
             Map<String, Object> jsonBody = new HashMap<>();
 
@@ -250,6 +251,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             Map<String, Object> apns = new HashMap<>();
             apns.put("aps", aps);
+            apns.put("notification_id", payload.getNotificationId());
             apns.put("jsonBody", jsonBody);
 
             String apnsPayload = GSON.toJson(apns);
