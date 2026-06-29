@@ -61,10 +61,9 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
     private void processBatch(WorkerPayload payload, LambdaLogger logger) {
 
         logger.log("Is silent notification : " + payload.isSilentPush());
-        if(!payload.isSilentPush()) {
+        if (!payload.isSilentPush()) {
 
-            Map<String, List<UserDevice>> userDevicesMap =
-                    fetchDevicesBulk(payload.getUserIds(), logger);
+            Map<String, List<UserDevice>> userDevicesMap = fetchDevicesBulk(payload.getUserIds(), logger);
 
             ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
             Set<String> processedEndpoints = ConcurrentHashMap.newKeySet();
@@ -87,7 +86,8 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
                             }
 
                             logger.log(GSON.toJson(device));
-                            String message = buildPlatformMessage(device.getPlatform(), device.getEnvironment() ,payload, logger);
+                            String message = buildPlatformMessage(device.getPlatform(), device.getEnvironment(),
+                                    payload, logger);
                             logger.log(message);
                             sendNotification(endpointArn, message, logger);
 
@@ -121,7 +121,8 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
     private Map<String, List<UserDevice>> fetchDevicesBulk(List<String> userIds, LambdaLogger logger) {
 
         logger.log("Inside build Device fetching..");
-        if (userIds == null || userIds.isEmpty()) return Collections.emptyMap();
+        if (userIds == null || userIds.isEmpty())
+            return Collections.emptyMap();
 
         Map<String, List<UserDevice>> map = new HashMap<>();
 
@@ -131,7 +132,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
                 "WHERE user_id IN (" + placeholders + ") AND is_active = true";
 
         try (Connection conn = DatabaseService.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(query)) {
+                PreparedStatement stmt = conn.prepareStatement(query)) {
 
             for (int i = 0; i < userIds.size(); i++) {
                 stmt.setObject(i + 1, UUID.fromString(userIds.get(i)));
@@ -169,7 +170,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             PublishResponse response = SNS.publish(request);
             logger.log("SNS Message sent to " + endpointArn + ". MessageId: " + response.messageId());
 
-            } catch (EndpointDisabledException | InvalidParameterException | NotFoundException e) {
+        } catch (EndpointDisabledException | InvalidParameterException | NotFoundException e) {
             logger.log("Endpoint invalid or disabled. Deactivating ARN: " + endpointArn + " Reason: " + e.getMessage());
             deactivateEndpoint(endpointArn, logger);
         } catch (Exception e) {
@@ -182,7 +183,7 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
                 "SET is_active = false, updated_at = CURRENT_TIMESTAMP " +
                 "WHERE endpoint_arn = ?";
         try (Connection conn = DatabaseService.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(updateQuery)) {
+                PreparedStatement stmt = conn.prepareStatement(updateQuery)) {
 
             stmt.setString(1, endpointArn);
             int rows = stmt.executeUpdate();
@@ -193,33 +194,66 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
         }
     }
 
-    private String buildPlatformMessage(String platform,String environment, WorkerPayload payload, LambdaLogger logger) {
+    private String buildPlatformMessage(String platform, String environment, WorkerPayload payload,
+            LambdaLogger logger) {
 
         Map<String, Object> message = new HashMap<>();
 
         logger.log("Platform: " + platform);
         logger.log("Environment : " + environment);
 
+        String htmlBody = payload.getBody();
+        String imageUrl = null;
+        String plainTextBody = htmlBody;
 
-        message.put("default", payload.getBody());
+        if (htmlBody != null) {
+            java.util.regex.Pattern imgPattern = java.util.regex.Pattern
+                    .compile("(?i)<img[^>]+src\\s*=\\s*['\"]([^'\"]+)['\"][^>]*>");
+            java.util.regex.Matcher imgMatcher = imgPattern.matcher(plainTextBody);
+            if (imgMatcher.find()) {
+                imageUrl = imgMatcher.group(1);
+            }
+            plainTextBody = plainTextBody.replaceAll("(?i)<img[^>]*>", "");
+            plainTextBody = plainTextBody.replaceAll("(?i)<br\\s*/?>", "\n");
+            plainTextBody = plainTextBody.replaceAll("(?i)</p>", "\n\n");
+            plainTextBody = plainTextBody.replaceAll("(?i)</div>", "\n");
+            plainTextBody = plainTextBody.replaceAll("<[^>]+>", "");
+            plainTextBody = plainTextBody.replaceAll("&nbsp;", " ");
+            plainTextBody = plainTextBody.replaceAll("&amp;", "&");
+            plainTextBody = plainTextBody.replaceAll("&lt;", "<");
+            plainTextBody = plainTextBody.replaceAll("&gt;", ">");
+            plainTextBody = plainTextBody.replaceAll("&quot;", "\"");
+            plainTextBody = plainTextBody.replaceAll("&#39;", "'");
+            plainTextBody = plainTextBody.trim();
+            plainTextBody = plainTextBody.replaceAll("(?m)^[ \\t]+|[ \\t]+$", "");
+            plainTextBody = plainTextBody.replaceAll("\\n{3,}", "\n\n");
+        }
+
+        message.put("default", plainTextBody);
 
         if ("ANDROID".equalsIgnoreCase(platform)) {
 
             Map<String, Object> data = new HashMap<>();
             data.put("title", payload.getTitle());
-            data.put("body", payload.getBody());
+            data.put("body", plainTextBody);
             data.put("notification_id", payload.getNotificationId());
+            if (imageUrl != null) {
+                data.put("image", imageUrl);
+            }
 
             Map<String, Object> jsonBody = new HashMap<>();
 
-            if(payload.getNotificationId() != null) {
+            if (payload.getNotificationId() != null) {
                 jsonBody.put("notification_id", payload.getNotificationId());
             }
             if (payload.getUrl() != null && !payload.getUrl().isEmpty()) {
                 jsonBody.put("external_link", payload.getUrl());
             }
-            if(payload.getVideoId() != null && payload.getVideoId() != 0) {
+            if (payload.getVideoId() != null && payload.getVideoId() != 0) {
                 jsonBody.put("video_id", payload.getVideoId());
+            }
+            if (imageUrl != null) {
+                jsonBody.put("image", imageUrl);
             }
 
             data.put("jsonBody", jsonBody);
@@ -229,12 +263,11 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             message.put("GCM", GSON.toJson(gcm));
 
-        }
-        else if ("IOS".equalsIgnoreCase(platform)) {
+        } else if ("IOS".equalsIgnoreCase(platform)) {
 
             Map<String, Object> alert = new HashMap<>();
             alert.put("title", payload.getTitle());
-            alert.put("body", payload.getBody());
+            alert.put("body", plainTextBody);
 
             Map<String, Object> aps = new HashMap<>();
             aps.put("alert", alert);
@@ -244,10 +277,13 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
             if (payload.getUrl() != null && !payload.getUrl().isEmpty()) {
                 jsonBody.put("external_link", payload.getUrl());
             }
-            if(payload.getVideoId() != null && payload.getVideoId() != 0) {
+            if (payload.getVideoId() != null && payload.getVideoId() != 0) {
                 jsonBody.put("video_id", payload.getVideoId());
             }
             jsonBody.put("notification_id", payload.getNotificationId() != null ? payload.getNotificationId() : "");
+            if (imageUrl != null) {
+                jsonBody.put("image", imageUrl);
+            }
 
             Map<String, Object> apns = new HashMap<>();
             apns.put("aps", aps);
@@ -256,10 +292,10 @@ public class NotificationWorkerHandler implements RequestHandler<SQSEvent, Void>
 
             String apnsPayload = GSON.toJson(apns);
 
-            if(environment.equalsIgnoreCase("PROD"))
+            if (environment.equalsIgnoreCase("PROD"))
                 message.put("APNS", apnsPayload);
 
-            else if(environment.equalsIgnoreCase("SANDBOX"))
+            else if (environment.equalsIgnoreCase("SANDBOX"))
                 message.put("APNS_SANDBOX", apnsPayload);
 
             logger.log(GSON.toJson(message));
